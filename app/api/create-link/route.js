@@ -3,33 +3,24 @@ import { NextResponse } from 'next/server'
 
 export async function POST(request) {
   try {
-    const { fbclid } = await request.json()
-
-    // 1. Env Var চেক
     if (!process.env.BOT_TOKEN) {
-      return NextResponse.json({ error: 'BOT_TOKEN missing in Vercel Env Vars' }, { status: 500 })
+      return NextResponse.json({ error: 'ENV: BOT_TOKEN missing' }, { status: 500 })
     }
     if (!process.env.TELEGRAM_CHANNEL_ID) {
-      return NextResponse.json({ error: 'TELEGRAM_CHANNEL_ID missing in Vercel Env Vars' }, { status: 500 })
+      return NextResponse.json({ error: 'ENV: TELEGRAM_CHANNEL_ID missing' }, { status: 500 })
+    }
+    if (!process.env.KV_REST_API_URL) {
+      return NextResponse.json({ error: 'ENV: KV Database not connected' }, { status: 500 })
     }
 
-    // 2. KV চেক
-    try {
-      await kv.set('test', '1', { ex: 10 })
-    } catch (e) {
-      return NextResponse.json({ error: 'KV Database not connected. Connect Upstash Redis in Storage tab' }, { status: 500 })
-    }
-
+    const { fbclid } = await request.json()
     const uniqueId = crypto.randomUUID().replace(/-/g, '').slice(0, 12)
     
     if (fbclid) {
       await kv.set(`join:${uniqueId}`, fbclid, { ex: 604800 })
     }
 
-    // 3. Telegram API কল
-    const telegramApiUrl = `https://api.telegram.org/bot${process.env.BOT_TOKEN}/createChatInviteLink`
-    
-    const linkResponse = await fetch(telegramApiUrl, {
+    const telegramRes = await fetch(`https://api.telegram.org/bot${process.env.BOT_TOKEN}/createChatInviteLink`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -40,18 +31,15 @@ export async function POST(request) {
       })
     })
 
-    const linkData = await linkResponse.json()
-
-    if (!linkData.ok) {
-      return NextResponse.json({ 
-        error: `Telegram Error: ${linkData.description}`,
-        hint: 'Bot কে চ্যানেলে Admin বানাইছো? Invite via Link permission দিছো?'
-      }, { status: 500 })
+    const data = await telegramRes.json()
+    
+    if (!data.ok) {
+      return NextResponse.json({ error: `Telegram: ${data.description}` }, { status: 500 })
     }
 
-    return NextResponse.json({ link: linkData.result.invite_link })
+    return NextResponse.json({ link: data.result.invite_link })
 
-  } catch (error) {
-    return NextResponse.json({ error: `Server Error: ${error.message}` }, { status: 500 })
+  } catch (e) {
+    return NextResponse.json({ error: `Crash: ${e.message}` }, { status: 500 })
   }
 }
