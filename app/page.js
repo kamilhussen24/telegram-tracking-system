@@ -142,6 +142,7 @@ export default function Home() {
               <div style={{ fontSize: '14px', color: '#cbd5e1' }}>
                 ✓ 100% Free to Join
               </div>
+            </div>
             <p style={{
               fontSize: '12px',
               color: '#64748b',
