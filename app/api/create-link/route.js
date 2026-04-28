@@ -1,29 +1,56 @@
-import { kv } from '@vercel/kv';
-import { NextResponse } from 'next/server';
+import { kv } from "@vercel/kv";
 
 export async function POST(request) {
-  const { fbclid } = await request.json();
+  try {
+    const { fbclid } = await request.json();
 
-  const uniqueId = crypto.randomUUID().replace(/-/g, '').slice(0, 12); // 082c12070cdd
-  const key = `join:${uniqueId}`;
+    const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
+    const CHAT_ID   = process.env.TELEGRAM_CHAT_ID;
 
-  await kv.set(key, fbclid || 'no_fbclid', { ex: 3600 }); // 1 ঘণ্টা
+    if (!BOT_TOKEN || !CHAT_ID) {
+      return Response.json({ error: "Server config missing" }, { status: 500 });
+    }
 
-  const botToken = process.env.TELEGRAM_BOT_TOKEN;
-  const channelId = process.env.TELEGRAM_CHANNEL_ID;
+    // 1. Unique ID তৈরি করো
+    const uniqueId  = crypto.randomUUID().replace(/-/g, "").slice(0, 16);
+    const timestamp = Math.floor(Date.now() / 1000);
 
-  const res = await fetch(`https://api.telegram.org/bot${botToken}/createChatInviteLink`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      chat_id: channelId,
-      name: `start=${uniqueId}`,
-      creates_join_request: true,
-      // member_limit: 1,  // ঐচ্ছিক
-    }),
-  });
+    // 2. KV তে save করো — uniqueId → { fbclid, timestamp }
+    await kv.set(
+      `join:${uniqueId}`,
+      JSON.stringify({ fbclid: fbclid || "", timestamp }),
+      { ex: 60 * 60 * 24 * 30 } // 30 দিন
+    );
 
-  const data = await res.json();
+    // 3. Telegram invite link তৈরি করো
+    //    creates_join_request: true → user কে request করতে হবে, auto-join না
+    const tgRes = await fetch(
+      `https://api.telegram.org/bot${BOT_TOKEN}/createChatInviteLink`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          chat_id: CHAT_ID,
+          name: `start=${uniqueId}`,  // webhook এ এটা দিয়ে fbclid খুঁজবো
+          creates_join_request: true,  // ← join request mode ON
+        }),
+      }
+    );
 
-  return NextResponse.json({ invite_link: data.result.invite_link });
+    const tgData = await tgRes.json();
+
+    if (!tgData.ok) {
+      console.error("Telegram error:", tgData);
+      return Response.json(
+        { error: `Telegram: ${tgData.description}` },
+        { status: 502 }
+      );
+    }
+
+    return Response.json({ inviteLink: tgData.result.invite_link });
+
+  } catch (err) {
+    console.error("create-link error:", err);
+    return Response.json({ error: "Internal error" }, { status: 500 });
+  }
 }

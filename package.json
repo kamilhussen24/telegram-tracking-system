@@ -1,15 +1,16 @@
 {
   "name": "telegram-join-tracker",
   "version": "1.0.0",
+  "private": true,
   "scripts": {
     "dev": "next dev",
     "build": "next build",
     "start": "next start"
   },
   "dependencies": {
-    "next": "14.2.15",
+    "next": "14.2.3",
     "react": "^18",
     "react-dom": "^18",
-    "@vercel/kv": "^1.0.0"
+    "@vercel/kv": "^2.0.0"
   }
 }

@@ -1,0 +1,16 @@
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg: #0a0a0f;
+  --surface: #13131a;
+  --border: #1e1e2e;
+  --tg: #229ed9;
+  --tg-dark: #1a7fb8;
+  --tg-glow: rgba(34,158,217,0.4);
+  --text: #e8e8f0;
+  --muted: #6e6e8a;
+  --success: #23d18b;
+  --error: #f87171;
+}
+
+html, body { height: 100%; background: var(--bg); color: var(--text); font-family: 'Segoe UI', system-ui, sans-serif; -webkit-font-smoothing: antialiased; }

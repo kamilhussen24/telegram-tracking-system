@@ -1,8 +1,3 @@
 /** @type {import('next').NextConfig} */
-const nextConfig = {
-  experimental: {
-    serverComponentsExternalPackages: ['@vercel/kv'],
-  },
-}
-
-module.exports = nextConfig
+const nextConfig = {};
+module.exports = nextConfig;
