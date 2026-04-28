@@ -1,14 +1,17 @@
-import "./globals.css";
-
 export const metadata = {
-  title: "Join Our Telegram Community",
-  description: "Get exclusive access to our private Telegram channel",
+  title: "Join Our Private Telegram Channel",
+  description: "Exclusive community — get instant access now.",
 };
 
 export default function RootLayout({ children }) {
   return (
     <html lang="en">
-      <body>{children}</body>
+      <head>
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+      </head>
+      <body style={{ margin: 0, padding: 0, background: "#0b0c10" }}>
+        {children}
+      </body>
     </html>
   );
 }

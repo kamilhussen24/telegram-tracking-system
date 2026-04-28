@@ -1,123 +1,150 @@
-# Telegram Join Tracker — Facebook CAPI
+# Telegram Join Tracker — Facebook CAPI (Production)
 
-Facebook Ad click → Landing Page → Telegram Join Request → Facebook CompleteRegistration ✅
+Facebook Ad → Landing Page → Telegram Join Request → `CompleteRegistration` ✅
 
-## কিভাবে কাজ করে
+---
+
+## Flow
 
 ```
-Facebook Ad (fbclid)
-  → yoursite.com?fbclid=IwAR...
-  → User "Join" বাটনে ক্লিক
-  → Unique invite link তৈরি (fbclid KV তে save)
-  → User Telegram এ "Request to Join" করে
-  → Webhook fire → Facebook CAPI event পাঠানো হয়
-  → Admin manually approve করে Telegram এ
+Facebook Ad click (fbclid=IwAR...)
+  ↓
+Landing page captures fbclid from URL
+  ↓
+User clicks "Join" → POST /api/create-link
+  ↓
+Unique invite link created (fbclid saved to KV with uniqueId)
+  ↓
+User redirected to Telegram → taps "Request to Join"
+  ↓
+Telegram fires webhook → POST /api/telegram
+  ↓
+Webhook: KV lookup → fbclid found → Facebook CAPI event sent
+  ↓
+Facebook Events Manager receives CompleteRegistration ✅
+  ↓
+Ads optimized for real Telegram joins (not just landing page clicks)
 ```
 
 ---
 
-## Deploy Steps
+## Deploy (First Time)
 
-### 1. GitHub এ push করুন
+### 1. Push to GitHub
 ```bash
-git init
-git add .
-git commit -m "initial commit"
+git init && git add . && git commit -m "init"
 git remote add origin https://github.com/YOUR/repo.git
 git push -u origin main
 ```
 
-### 2. Vercel এ import করুন
-[vercel.com/new](https://vercel.com/new) → GitHub repo select করুন
+### 2. Import to Vercel
+[vercel.com/new](https://vercel.com/new) → select your repo → Deploy
 
-### 3. Vercel KV চালু করুন
-Project → Storage → Create → KV → Connect to project
+### 3. Connect Vercel KV
+Project → Storage → Create Database → **KV** (Upstash) → Connect
 
-### 4. Environment Variables সেট করুন
-Vercel Project → Settings → Environment Variables:
+### 4. Set Environment Variables
+Project → Settings → Environment Variables:
 
-```
-TELEGRAM_BOT_TOKEN       = আপনার bot token (@BotFather থেকে)
-TELEGRAM_CHAT_ID         = আপনার channel ID (negative number)
-TELEGRAM_WEBHOOK_SECRET  = যেকোনো random string (e.g. mysecret123)
-FACEBOOK_PIXEL_ID        = আপনার Pixel ID
-FACEBOOK_ACCESS_TOKEN    = Events Manager থেকে CAPI token
-NEXT_PUBLIC_SITE_URL     = https://yoursite.vercel.app
-```
+| Variable | Value |
+|---|---|
+| `TELEGRAM_BOT_TOKEN` | From @BotFather |
+| `TELEGRAM_CHAT_ID` | Your channel ID (negative number) |
+| `TELEGRAM_WEBHOOK_SECRET` | Any random string e.g. `abc123xyz` |
+| `FACEBOOK_PIXEL_ID` | Your Pixel ID |
+| `FACEBOOK_ACCESS_TOKEN` | From Events Manager → CAPI |
+| `FACEBOOK_TEST_EVENT_CODE` | *(optional)* e.g. `TEST12345` — for testing only |
 
-### 5. Bot কে Channel Admin বানান
-- আপনার private channel এ bot কে add করুন
-- Admin permissions: **Invite Users** ✅
+### 5. Make Bot Admin of Your Channel
+- Go to your private channel → Add Admin → search your bot
+- Required permissions: **✅ Add Members / Invite via Link**
 
-### 6. Webhook Register করুন (একবারই)
-Deploy হওয়ার পর এই command run করুন:
-
+### 6. Register Telegram Webhook (run once after deploy)
 ```bash
-curl -X POST "https://api.telegram.org/bot<YOUR_BOT_TOKEN>/setWebhook" \
+curl -X POST "https://api.telegram.org/bot<BOT_TOKEN>/setWebhook" \
   -H "Content-Type: application/json" \
   -d '{
-    "url": "https://yoursite.vercel.app/api/telegram",
-    "secret_token": "mysecret123",
+    "url": "https://YOUR-SITE.vercel.app/api/telegram",
+    "secret_token": "abc123xyz",
     "allowed_updates": ["chat_join_request"]
   }'
 ```
 
-Verify করুন:
+Verify:
 ```bash
-curl "https://api.telegram.org/bot<YOUR_BOT_TOKEN>/getWebhookInfo"
+curl "https://api.telegram.org/bot<BOT_TOKEN>/getWebhookInfo"
 ```
 
 ---
 
-## Test করুন
+## Testing
 
-1. `https://yoursite.vercel.app?fbclid=TEST_CLICK_123` এ যান
-2. "Join Community" ক্লিক করুন
-3. Telegram link ওপেন হবে → "Request to Join" করুন
-4. Vercel → Functions → Logs এ দেখুন `[FB] CAPI response`
-5. Facebook Events Manager → Test Events এ দেখুন
-
-**Test Events এর জন্য:**
-`app/api/telegram/route.js` এ এই লাইন uncomment করুন:
-```js
-test_event_code: "TEST12345",
+### Step 1 — Enable Test Events
+Add to Vercel env vars:
 ```
-(Events Manager থেকে আপনার code নিন)
+FACEBOOK_TEST_EVENT_CODE = TEST12345
+```
+(Get your code from Events Manager → Test Events tab)
+
+### Step 2 — Test Full Flow
+```
+https://YOUR-SITE.vercel.app?fbclid=TESTCLICK123
+→ Click "Join Community"
+→ Telegram opens → tap "Request to Join"
+```
+
+### Step 3 — Check Vercel Logs
+Vercel → Functions → Logs — look for:
+```
+[FB] ✅ CAPI SUCCESS — eventId:tg_joinreq_... events_received:1
+```
+
+### Step 4 — Check Facebook
+Events Manager → Test Events → should show `CompleteRegistration`
+
+### Step 5 — Go Live
+Remove `FACEBOOK_TEST_EVENT_CODE` from env vars → Redeploy
 
 ---
 
-## Channel ID বের করার উপায়
+## Vercel Logs Reference
 
-Option 1: Bot দিয়ে
-```
-https://api.telegram.org/bot<TOKEN>/getUpdates
-```
-Channel এ একটা message পাঠান, তারপর এই URL hit করুন।
-
-Option 2: @userinfobot কে channel এ add করুন — ID দিয়ে দেবে।
-
----
-
-## Important Notes
-
-- **Auto-approve নেই** — Admin manually Telegram থেকে approve করবেন
-- **Event কখন যায়** — Join request করার সাথে সাথে (approve এর আগে)
-- **Duplicate protection** — একই user দুইবার event fire করবে না
-- **fbclid ছাড়াও কাজ করে** — শুধু attribution হবে না
+| Log line | Meaning |
+|---|---|
+| `[create-link] OK — uniqueId:xxx fbclid:yyy` | Link created successfully |
+| `[Webhook] JoinRequest — user:123 ...` | User requested to join |
+| `[KV] ✅ Found — uniqueId:xxx fbclid:yyy` | fbclid retrieved successfully |
+| `[KV] ⚠️ No record for uniqueId` | Link wasn't created via our system |
+| `[FB] ✅ CAPI SUCCESS — events_received:1` | Facebook received the event ✅ |
+| `[FB] ❌ CAPI ERROR` | Check Pixel ID and Access Token |
+| `[Webhook] ⏩ Duplicate — already processed` | Same user joined twice — skipped |
+| `[Webhook] ⛔ Invalid secret token` | Webhook secret mismatch |
 
 ---
 
-## File Structure
+## Facebook Event Details
 
-```
-app/
-  page.js                     ← Landing page (fbclid capture করে)
-  layout.js
-  globals.css
-  api/
-    create-link/route.js      ← Unique invite link তৈরি + KV save
-    telegram/route.js         ← Webhook handler + FB CAPI
-.env.example
-package.json
-next.config.js
-```
+**Event Name:** `CompleteRegistration`
+
+**User Data sent:**
+- `external_id` — Telegram user ID (SHA-256 hashed)
+- `fbc` — Facebook click ID cookie (when fbclid present)
+- `fn` — Username (hashed, if available)
+- `client_user_agent` — `TelegramBot/1.0`
+
+**Custom Data:**
+- `content_name` — "Telegram Channel Join Request"
+- `content_category` — "community"
+- `status` — "join_requested"
+- `has_fbclid` — "yes" / "no"
+
+**Deduplication:** `event_id = tg_joinreq_{chatId}_{userId}`
+
+---
+
+## Notes
+
+- **No auto-approve** — admin approves manually in Telegram
+- **Event fires on join request** — not on approval
+- **Duplicate protection** — each user fires event exactly once (30-day window)
+- **No fbclid = still works** — event sent, just no ad attribution
