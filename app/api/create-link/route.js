@@ -3,12 +3,11 @@ import { NextResponse } from 'next/server'
 
 export async function POST(request) {
   try {
-    // এই লাইনেই ক্র্যাশ করতেছে যদি KV কানেক্ট না থাকে
     const { fbclid } = await request.json()
     const uniqueId = crypto.randomUUID().replace(/-/g, '').slice(0, 12)
     
     if (fbclid) {
-      await kv.set(`join:${uniqueId}`, fbclid, { ex: 604800 })
+      await kv.set(`join:${uniqueId}`, fbclid, { ex: 604800 }) // 7 দিন
     }
 
     const telegramRes = await fetch(`https://api.telegram.org/bot${process.env.BOT_TOKEN}/createChatInviteLink`, {
@@ -18,7 +17,7 @@ export async function POST(request) {
         chat_id: process.env.TELEGRAM_CHANNEL_ID,
         name: `start=${uniqueId}`,
         creates_join_request: true,
-        member_limit: 1
+        // member_limit: 1  <-- এই লাইন ডিলিট করো বা কমেন্ট করো
       })
     })
 
