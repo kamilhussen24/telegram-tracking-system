@@ -1,14 +1,55 @@
-# KDex Community Tracker v3.0 — Facebook CAPI
+# KDex Community Tracker v5.0
+## Facebook CAPI — Production Ready
 
-## What's New in v3.0
-- ✅ Facebook Pixel installed on landing page → `_fbp` cookie auto-collected
-- ✅ `_fbc` cookie also collected from Pixel (more accurate than manual fbc)
-- ✅ No "Telegram" branding on landing page (ad-safe)
-- ✅ `InitiateCheckout` browser Pixel event fires on Join button click
-- ✅ `ViewContent` browser Pixel event fires on page load
-- ✅ Beautiful structured logs in Vercel
-- ✅ White KDex footer credit
-- ✅ Spinner stops correctly after redirect
+---
+
+## Meta CAPI Hashing Rules (v5 Compliant)
+
+| Field | Hashed? | Reason |
+|---|---|---|
+| `external_id` | ✅ SHA-256 | PII — Telegram user ID |
+| `fn` (first_name) | ✅ SHA-256 | PII |
+| `ln` (username) | ✅ SHA-256 | PII |
+| `client_ip_address` | ❌ Raw/Plain | Meta normalizes it internally |
+| `client_user_agent` | ❌ Raw/Plain | Meta spec |
+| `fbc` | ❌ Raw/Plain | Meta spec |
+| `fbp` | ❌ Raw/Plain | Meta spec |
+
+Ref: https://developers.facebook.com/docs/marketing-api/conversions-api/parameters/customer-information-parameters
+
+---
+
+## Expected Payload (v5)
+
+```json
+{
+  "data": [{
+    "event_name": "CompleteRegistration",
+    "event_time": 1777450060,
+    "event_id": "tg_joinreq_-1003870239597_666840337",
+    "action_source": "website",
+    "user_data": {
+      "external_id": "07c43d4a...SHA256",
+      "fn": "604de9db...SHA256",
+      "ln": "31d6ced8...SHA256",
+      "client_ip_address": "103.20.110.200",
+      "client_user_agent": "Mozilla/5.0 (Linux; Android...",
+      "fbc": "fb.1.1777430040459.IwAR123xyz",
+      "fbp": "fb.2.1777430040459.234464121986"
+    },
+    "custom_data": {
+      "content_name": "Community Join Request",
+      "content_category": "community",
+      "status": "join_requested",
+      "has_fbclid": "yes",
+      "has_fbp": "yes",
+      "has_fbc": "yes",
+      "has_ip": "yes",
+      "has_ua": "yes"
+    }
+  }]
+}
+```
 
 ---
 
@@ -17,10 +58,10 @@
 | Variable | Value |
 |---|---|
 | `TELEGRAM_BOT_TOKEN` | From @BotFather |
-| `TELEGRAM_CHAT_ID` | `-1003870239597` |
-| `TELEGRAM_WEBHOOK_SECRET` | `kdex2025secret` |
+| `TELEGRAM_CHAT_ID` | Your channel ID (negative number) |
+| `TELEGRAM_WEBHOOK_SECRET` | Any strong random string |
 | `FACEBOOK_PIXEL_ID` | Your Pixel ID |
-| `NEXT_PUBLIC_FACEBOOK_PIXEL_ID` | Same Pixel ID (for browser Pixel) |
+| `NEXT_PUBLIC_FACEBOOK_PIXEL_ID` | Same Pixel ID (browser Pixel) |
 | `FACEBOOK_ACCESS_TOKEN` | From Events Manager → CAPI |
 
 Testing only (remove before going live):
@@ -37,33 +78,41 @@ curl -X POST "https://api.telegram.org/bot<TOKEN>/setWebhook" \
   -H "Content-Type: application/json" \
   -d '{
     "url": "https://YOUR-SITE.vercel.app/api/telegram",
-    "secret_token": "kdex2025secret",
+    "secret_token": "YOUR_WEBHOOK_SECRET",
     "allowed_updates": ["chat_join_request"]
   }'
 ```
 
 ---
 
-## Vercel Log Reference
+## Vercel Logs (clean format)
 
 ```
-┌─────────────────────────────────────────
-│ [FB] ✅ CAPI SUCCESS
-│ event_id        : tg_joinreq_-100387..._12345
-│ events_received : 1
-│ fbtrace_id      : AbCdEf123
-│ fbc             : fb.1.1714385700000.IwAR...
-│ has_fbp         : ✅ yes
-│ has_ip          : ✅ yes
-│ has_ua          : ✅ yes
-│ has_name        : ✅ yes
-└─────────────────────────────────────────
+[Webhook] Join request — user: 666840337 (@johndoe) | chat: -1003870239597
+[KV] Session found — fbclid: IwAR123 | fbp: yes | fbc: yes | ip: 103.20.110.200
+[CAPI] Sending payload: { ... }
+[CAPI] Success — events_received: 1 | fbtrace_id: AbCdEf123
+[CAPI] Signals — fbclid: yes | fbp: yes | fbc: yes | ip: yes | ua: yes
 ```
+
+---
+
+## Reset Test User
+
+Vercel → Storage → KV → Data Browser → delete:
+```
+processed:{CHAT_ID}:{USER_ID}
+```
+
+---
 
 ## Facebook Campaign Setup
 
-- **Objective:** Conversions
-- **Event:** CompleteRegistration
-- **Goal:** Maximize conversions
-- **Budget:** Min ৳500/day
-- **Wait for:** 50 events before judging performance
+| Setting | Value |
+|---|---|
+| Objective | Conversions |
+| Conversion Event | CompleteRegistration |
+| Performance Goal | Maximize number of conversions |
+| Budget | Min ৳500/day |
+| Audience | Broad |
+| Learning Phase | 50 events minimum |
