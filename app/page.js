@@ -3,59 +3,26 @@
 import { useSearchParams } from "next/navigation";
 import { useState, Suspense, useEffect, useRef } from "react";
 
-/* ── Read _fbp cookie (set by Facebook Pixel) ─────────────────── */
 function getFbp() {
-  try {
-    const m = document.cookie.match(/(^|;\s*)_fbp=([^;]*)/);
-    return m ? m[2] : "";
-  } catch { return ""; }
+  try { const m = document.cookie.match(/(^|;\s*)_fbp=([^;]*)/); return m ? m[2] : ""; } catch { return ""; }
 }
-
-/* ── Read _fbc cookie (set by Facebook Pixel from fbclid) ─────── */
 function getFbc() {
-  try {
-    const m = document.cookie.match(/(^|;\s*)_fbc=([^;]*)/);
-    return m ? m[2] : "";
-  } catch { return ""; }
+  try { const m = document.cookie.match(/(^|;\s*)_fbc=([^;]*)/); return m ? m[2] : ""; } catch { return ""; }
+}
+function pixelTrack(event, data = {}) {
+  try { if (window.fbq) window.fbq("track", event, data); } catch {}
 }
 
-/* ── Fire Pixel ViewContent event ─────────────────────────────── */
-function pixelViewContent() {
-  try {
-    if (typeof window !== "undefined" && window.fbq) {
-      window.fbq("track", "ViewContent", {
-        content_name: "Community Join Page",
-        content_category: "community",
-      });
-    }
-  } catch {}
-}
-
-/* ── Fire Pixel InitiateCheckout (Join button click) ──────────── */
-function pixelInitiateCheckout() {
-  try {
-    if (typeof window !== "undefined" && window.fbq) {
-      window.fbq("track", "InitiateCheckout", {
-        content_name: "Community Join Initiated",
-      });
-    }
-  } catch {}
-}
-
-/* ─────────────────────────────────────────────────────────────── */
 function LandingPage() {
   const searchParams = useSearchParams();
   const fbclid = searchParams.get("fbclid") || "";
-
-  const [status, setStatus] = useState("idle"); // idle|loading|redirecting|done|error
+  const [status, setStatus] = useState("idle");
   const [errMsg, setErrMsg] = useState("");
   const [tgLink, setTgLink] = useState("");
   const redirected = useRef(false);
 
-  /* Fire ViewContent once on load */
-  useEffect(() => { pixelViewContent(); }, []);
+  useEffect(() => { pixelTrack("ViewContent", { content_name: "Community Join Page", content_category: "community" }); }, []);
 
-  /* Redirect to community link after link is ready */
   useEffect(() => {
     if (!tgLink || redirected.current) return;
     redirected.current = true;
@@ -68,25 +35,21 @@ function LandingPage() {
     if (status === "loading" || status === "redirecting") return;
     setStatus("loading");
     setErrMsg("");
-
-    /* Fire browser Pixel event */
-    pixelInitiateCheckout();
-
+    pixelTrack("InitiateCheckout", { content_name: "Community Join Initiated" });
     try {
-      const userAgent = navigator.userAgent || "";
-      const fbp       = getFbp();   // from Facebook Pixel cookie
-      const fbc       = getFbc();   // from Facebook Pixel cookie (fbclid based)
-      const pageUrl   = window.location.href;
-
       const res = await fetch("/api/create-link", {
-        method:  "POST",
+        method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ fbclid, fbp, fbc, userAgent, pageUrl }),
+        body: JSON.stringify({
+          fbclid,
+          fbp: getFbp(),
+          fbc: getFbc(),
+          userAgent: navigator.userAgent || "",
+          pageUrl: window.location.href,
+        }),
       });
-
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Failed to create link");
-
       setStatus("redirecting");
       setTgLink(data.inviteLink);
     } catch (e) {
@@ -105,51 +68,39 @@ function LandingPage() {
         body{font-family:'Inter',system-ui,sans-serif;background:#0b0c10;color:#e2e4ee;min-height:100vh;-webkit-font-smoothing:antialiased;}
 
         .page{
-          min-height:100vh;display:flex;flex-direction:column;
-          align-items:center;justify-content:flex-start;
+          min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:flex-start;
           padding:24px 16px 48px;
           background:radial-gradient(ellipse 90% 50% at 50% -5%,rgba(34,158,217,0.18) 0%,transparent 65%),#0b0c10;
         }
-
         .card{
-          width:100%;max-width:430px;
-          background:#111318;
-          border:1px solid rgba(255,255,255,0.07);
-          border-radius:20px;overflow:hidden;
+          width:100%;max-width:430px;background:#111318;
+          border:1px solid rgba(255,255,255,0.07);border-radius:20px;overflow:hidden;
           box-shadow:0 32px 80px rgba(0,0,0,0.7),0 0 0 1px rgba(34,158,217,0.06);
         }
-
-        /* Banner */
         .banner{
           background:linear-gradient(135deg,#1565a8,#229ed9 55%,#1fb8d3);
           padding:26px 26px 22px;text-align:center;position:relative;overflow:hidden;
         }
         .banner::after{content:'';position:absolute;inset:0;background:radial-gradient(ellipse 70% 80% at 50% 120%,rgba(0,0,0,0.25),transparent);pointer-events:none;}
         .icon-wrap{
-          width:62px;height:62px;border-radius:17px;
-          background:rgba(255,255,255,0.18);backdrop-filter:blur(8px);
-          border:1.5px solid rgba(255,255,255,0.3);
-          display:flex;align-items:center;justify-content:center;
-          margin:0 auto 13px;position:relative;z-index:1;
+          width:62px;height:62px;border-radius:17px;background:rgba(255,255,255,0.18);
+          backdrop-filter:blur(8px);border:1.5px solid rgba(255,255,255,0.3);
+          display:flex;align-items:center;justify-content:center;margin:0 auto 13px;position:relative;z-index:1;
         }
         .banner h1{font-size:21px;font-weight:800;color:#fff;line-height:1.25;letter-spacing:-.02em;position:relative;z-index:1;}
         .banner-sub{font-size:13px;color:rgba(255,255,255,0.72);margin-top:5px;position:relative;z-index:1;}
 
-        /* Body */
         .body{padding:22px 22px 26px;}
 
-        /* Live badge */
         @keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
         .live{display:inline-flex;align-items:center;gap:6px;background:rgba(35,209,139,0.09);border:1px solid rgba(35,209,139,0.22);color:#23d18b;font-size:11px;font-weight:700;padding:4px 11px;border-radius:999px;letter-spacing:.07em;text-transform:uppercase;margin-bottom:14px;}
         .live-dot{width:6px;height:6px;border-radius:50%;background:#23d18b;animation:pulse 1.8s infinite;}
 
-        /* Stats */
         .stats{display:flex;gap:7px;margin-bottom:18px;}
         .stat{flex:1;text-align:center;background:#0d1017;border:1px solid #191d27;border-radius:10px;padding:11px 6px;}
         .stat-num{font-size:18px;font-weight:800;color:#e2e4ee;line-height:1;}
         .stat-lbl{font-size:10.5px;color:#424660;margin-top:3px;font-weight:500;}
 
-        /* Button */
         @keyframes spin{to{transform:rotate(360deg)}}
         .btn{display:flex;align-items:center;justify-content:center;gap:9px;width:100%;padding:16px;border-radius:13px;border:none;font-size:15.5px;font-weight:700;cursor:pointer;transition:transform .18s,box-shadow .18s;letter-spacing:.01em;margin-bottom:14px;font-family:'Inter',system-ui,sans-serif;}
         .btn-primary{background:linear-gradient(135deg,#1e90d4,#229ed9,#1fb8cf);color:#fff;box-shadow:0 8px 28px rgba(34,158,217,0.42);}
@@ -159,43 +110,34 @@ function LandingPage() {
         .btn-done{background:linear-gradient(135deg,#047857,#10b981);color:#fff;box-shadow:0 8px 28px rgba(16,185,129,0.35);cursor:default;}
         .spinner{width:17px;height:17px;flex-shrink:0;border:2.5px solid rgba(255,255,255,0.18);border-top-color:#fff;border-radius:50%;animation:spin .7s linear infinite;}
 
-        /* Redirect notice */
         .redirect-notice{display:flex;align-items:flex-start;gap:9px;padding:11px 13px;margin-bottom:14px;background:rgba(34,158,217,0.07);border:1px solid rgba(34,158,217,0.18);border-radius:10px;font-size:12.5px;color:#5ab5e0;line-height:1.55;}
 
-        /* Divider */
-        .divider{display:flex;align-items:center;gap:9px;margin-bottom:14px;font-size:10.5px;color:#2a2d3d;font-weight:600;text-transform:uppercase;letter-spacing:.07em;}
-        .divider::before,.divider::after{content:'';flex:1;height:1px;background:#181b24;}
+        .section-title{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:#ffffff;margin-bottom:12px;display:flex;align-items:center;gap:8px;}
+        .section-title::before,.section-title::after{content:'';flex:1;height:1px;background:#1e2130;}
 
-        /* Features */
         .features{display:flex;flex-direction:column;gap:8px;}
         .feat{display:flex;align-items:center;gap:11px;padding:10px 13px;background:#0d1017;border:1px solid #191d27;border-radius:9px;font-size:13px;color:#8890aa;}
         .feat-ico{font-size:16px;flex-shrink:0;}
         .feat strong{color:#c4c8dc;font-weight:600;}
 
-        /* Error */
         .err{padding:11px 13px;margin-bottom:12px;background:rgba(239,68,68,0.07);border:1px solid rgba(239,68,68,0.18);border-radius:9px;color:#f87171;font-size:12.5px;line-height:1.5;}
 
-        /* Footer */
-        .footer{text-align:center;padding:14px 22px 18px;border-top:1px solid #141720;}
-        .kdex-credit{display:inline-flex;align-items:center;gap:5px;font-size:12px;color:#ffffff;text-decoration:none;transition:opacity .18s;opacity:0.85;}
-        .kdex-credit:hover{opacity:1;}
-        .kdex-brand{font-weight:800;color:#ffffff;letter-spacing:.04em;}
-        .kdex-sep{color:rgba(255,255,255,0.3);margin:0 2px;}
+        .footer{text-align:center;padding:13px 22px 17px;border-top:1px solid #141720;}
+        .kdex-link{display:inline-flex;align-items:center;gap:5px;text-decoration:none;font-size:12px;color:rgba(255,255,255,0.6);transition:color .18s;}
+        .kdex-link:hover{color:rgba(255,255,255,0.85);}
+        .kdex-ads{font-weight:500;}
+        .kdex-sep{color:rgba(255,255,255,0.35);}
+        .kdex-brand{font-weight:800;color:#38bdf8;letter-spacing:.03em;transition:color .18s;}
+        .kdex-link:hover .kdex-brand{color:#7dd3fc;}
 
-        @media(max-width:400px){
-          .banner{padding:20px 18px 18px}
-          .body{padding:18px 16px 22px}
-          .banner h1{font-size:19px}
-        }
+        @media(max-width:400px){.banner{padding:20px 18px 18px}.body{padding:18px 16px 22px}.banner h1{font-size:19px}}
       `}</style>
 
       <div className="page">
         <div className="card">
 
-          {/* Banner — no "Telegram" branding */}
           <div className="banner">
             <div className="icon-wrap">
-              {/* Generic community/group icon */}
               <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
                 <circle cx="9" cy="7" r="4"/>
@@ -207,9 +149,7 @@ function LandingPage() {
             <p className="banner-sub">Expert insights · Daily updates · Zero spam</p>
           </div>
 
-          {/* Body */}
           <div className="body">
-
             <div style={{textAlign:"center"}}>
               <span className="live"><span className="live-dot"/>Members Active Now</span>
             </div>
@@ -223,11 +163,8 @@ function LandingPage() {
               ))}
             </div>
 
-            {/* CTA — top */}
             {status === "done" ? (
-              <button className="btn btn-done" disabled>
-                ✅ Link Opened — Request to Join
-              </button>
+              <button className="btn btn-done" disabled>✅ Link Opened — Request to Join</button>
             ) : (
               <button className="btn btn-primary" onClick={handleJoin} disabled={isLoading}>
                 {isLoading ? (
@@ -244,7 +181,6 @@ function LandingPage() {
               </button>
             )}
 
-            {/* Redirect notice */}
             {status === "redirecting" && tgLink && (
               <div className="redirect-notice">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#5ab5e0" strokeWidth="2" strokeLinecap="round" style={{flexShrink:0,marginTop:1}}>
@@ -256,7 +192,7 @@ function LandingPage() {
 
             {status === "error" && <div className="err">⚠️ {errMsg} — Please try again.</div>}
 
-            <div className="divider">What you get</div>
+            <div className="section-title">What you get</div>
 
             <div className="features">
               {[
@@ -271,13 +207,11 @@ function LandingPage() {
                 </div>
               ))}
             </div>
-
           </div>
 
-          {/* Footer — white KDex, no bottom note */}
           <div className="footer">
-            <a href="https://kdex.io" target="_blank" rel="noreferrer" className="kdex-credit">
-              <span>Ads by</span>
+            <a href="https://kdex.io" target="_blank" rel="noreferrer" className="kdex-link">
+              <span className="kdex-ads">Ads by</span>
               <span className="kdex-sep">·</span>
               <span className="kdex-brand">KDex</span>
             </a>

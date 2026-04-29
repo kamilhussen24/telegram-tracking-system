@@ -1,0 +1,9 @@
+curl -X POST "https://api.telegram.org/bot8725852891:AAEJXWmKAhInMY3fwxFDenvmIXhMPMySKck/setWebhook" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "url": "https://kdex-system-kuzz.vercel.app/api/telegram",
+    "secret_token": "kdex2025secret",
+    "allowed_updates": ["chat_join_request"]
+  }'
+
+curl "https://api.telegram.org/bot8725852891:AAEJXWmKAhInMY3fwxFDenvmIXhMPMySKck/getWebhookInfo"
