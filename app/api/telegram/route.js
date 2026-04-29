@@ -183,24 +183,11 @@ export async function POST(request) {
   const username  = joinReq.from?.username   || null;  // @username (for logging only)
   const invName   = joinReq.invite_link?.name ?? "";
 
-  console.log(`[Webhook] Join request | user:${userId} (@${username || "?"}) | chat:${chatId} | invite:"${invName}"`);
+  // Silent ignore — external/manual links produce zero logs
+  if (!userId || !chatId) return Response.json({ ok: true });
+  if (!invName.startsWith("start=")) return Response.json({ ok: true });
 
-  if (!userId || !chatId) {
-    console.error("[Webhook] Missing userId or chatId");
-    return Response.json({ ok: true });
-  }
-
-  // ─────────────────────────────────────────────────────────────────────────
-  // ✅ FIX: Only fire FB event if invite link was created by OUR bot
-  //    Our bot names links as: "start=<uniqueId>"
-  //    Other links (manual, external) have different names → SKIP
-  // ─────────────────────────────────────────────────────────────────────────
-  const isOurLink = invName.startsWith("start=");
-
-  if (!isOurLink) {
-    console.log(`[Webhook] Skipped — not our bot link (invite:"${invName}") — no FB event sent`);
-    return Response.json({ ok: true });
-  }
+  console.log(`[Webhook] Join request | user:${userId} (@${username || "?"}) | chat:${chatId}`);
 
   // 5. Deduplication — one event per user per chat (30 days)
   const dedupeKey = `processed:${chatId}:${userId}`;
