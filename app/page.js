@@ -413,7 +413,7 @@ function LandingPage() {
 
           {/* ── Footer ── */}
           <div className="footer">
-            <a href="https://t.me/+mjeIPVeI4iAzYzNl" target="_blank" rel="noreferrer" className="kdex-link">
+            <a href="https://kdex.io" target="_blank" rel="noreferrer" className="kdex-link">
               <span className="kdex-ads">Ads by</span>
               <span className="kdex-sep">·</span>
               <span className="kdex-brand">KDex</span>
