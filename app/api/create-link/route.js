@@ -7,35 +7,60 @@ export async function POST(request) {
   const CHAT_ID   = process.env.TELEGRAM_CHAT_ID;
 
   if (!BOT_TOKEN || !CHAT_ID) {
-    console.error("[create-link] Missing TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID");
+    console.error("[create-link] ❌ Missing TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID");
     return Response.json({ error: "Server config missing" }, { status: 500 });
   }
 
-  let fbclid = "";
+  // ── Parse body ───────────────────────────────────────────────
+  let fbclid = "", fbp = "", userAgent = "", pageUrl = "";
   try {
     const body = await request.json();
-    fbclid = (body.fbclid || "").trim().slice(0, 500); // sanitize
-  } catch {
-    // no body — that's fine, fbclid stays empty
-  }
+    fbclid    = (body.fbclid    || "").trim().slice(0, 500);
+    fbp       = (body.fbp       || "").trim().slice(0, 200);
+    userAgent = (body.userAgent || "").trim().slice(0, 500);
+    pageUrl   = (body.pageUrl   || "").trim().slice(0, 500);
+  } catch { /* no body */ }
 
-  // 1. Unique session ID
+  // ── Real client IP (Vercel forwards this) ────────────────────
+  const clientIp =
+    request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
+    request.headers.get("x-real-ip") ||
+    "";
+
+  // ── Unique session ID ─────────────────────────────────────────
   const uniqueId  = crypto.randomUUID().replace(/-/g, "").slice(0, 20);
   const timestamp = Math.floor(Date.now() / 1000);
 
-  // 2. Persist to KV — expires in 30 days
+  // ── Store all signals in KV (30 days TTL) ────────────────────
+  const payload = {
+    fbclid,
+    fbp,
+    userAgent,
+    clientIp,
+    pageUrl,
+    timestamp,
+    createdAt: new Date().toISOString(),
+  };
+
   try {
-    await kv.set(
-      `join:${uniqueId}`,
-      JSON.stringify({ fbclid, timestamp, createdAt: new Date().toISOString() }),
-      { ex: 60 * 60 * 24 * 30 }
-    );
-  } catch (kvErr) {
-    console.error("[create-link] KV write failed:", kvErr);
+    await kv.set(`join:${uniqueId}`, JSON.stringify(payload), {
+      ex: 60 * 60 * 24 * 30,
+    });
+  } catch (e) {
+    console.error("[create-link] ❌ KV write failed:", e);
     return Response.json({ error: "Storage error" }, { status: 500 });
   }
 
-  // 3. Create invite link — creates_join_request: true (user must request)
+  console.log(
+    `[create-link] ✅ Session saved` +
+    ` | uniqueId:${uniqueId}` +
+    ` | fbclid:${fbclid || "(none)"}` +
+    ` | fbp:${fbp || "(none)"}` +
+    ` | ip:${clientIp || "(none)"}` +
+    ` | ua:${userAgent.slice(0, 60) || "(none)"}`
+  );
+
+  // ── Create Telegram invite link ───────────────────────────────
   let tgData;
   try {
     const tgRes = await fetch(
@@ -51,19 +76,15 @@ export async function POST(request) {
       }
     );
     tgData = await tgRes.json();
-  } catch (netErr) {
-    console.error("[create-link] Telegram network error:", netErr);
+  } catch (e) {
+    console.error("[create-link] ❌ Telegram network error:", e);
     return Response.json({ error: "Telegram unreachable" }, { status: 502 });
   }
 
   if (!tgData.ok) {
-    console.error("[create-link] Telegram API error:", JSON.stringify(tgData));
-    return Response.json(
-      { error: `Telegram: ${tgData.description}` },
-      { status: 502 }
-    );
+    console.error("[create-link] ❌ Telegram API error:", JSON.stringify(tgData));
+    return Response.json({ error: `Telegram: ${tgData.description}` }, { status: 502 });
   }
 
-  console.log(`[create-link] OK — uniqueId:${uniqueId} fbclid:${fbclid || "(none)"}`);
   return Response.json({ inviteLink: tgData.result.invite_link });
 }

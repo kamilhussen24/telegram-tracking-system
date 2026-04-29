@@ -2,9 +2,9 @@ import { kv } from "@vercel/kv";
 
 export const runtime = "nodejs";
 
-// ─────────────────────────────────────────────────────────────────────────────
-// SHA-256  (required by Facebook — user_data must be hashed)
-// ─────────────────────────────────────────────────────────────────────────────
+/* ═══════════════════════════════════════════════════════════════════
+   SHA-256 hash — Facebook requires all PII to be hashed
+   ═══════════════════════════════════════════════════════════════════ */
 async function sha256(value) {
   if (!value) return undefined;
   const buf = await crypto.subtle.digest(
@@ -16,72 +16,101 @@ async function sha256(value) {
     .join("");
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Build Facebook CAPI payload — all recommended fields included
-// https://developers.facebook.com/docs/marketing-api/conversions-api/parameters
-// ─────────────────────────────────────────────────────────────────────────────
-async function buildFBPayload({ fbclid, timestamp, userId, chatId, username, firstName }) {
-  const PIXEL_ID     = process.env.FACEBOOK_PIXEL_ID;
-  const ACCESS_TOKEN = process.env.FACEBOOK_ACCESS_TOKEN;
-  const TEST_CODE    = process.env.FACEBOOK_TEST_EVENT_CODE; // optional
+/* ═══════════════════════════════════════════════════════════════════
+   Build the full Facebook CAPI payload
+   All recommended fields for maximum Event Match Quality (EMQ)
+   Docs: https://developers.facebook.com/docs/marketing-api/conversions-api/parameters
+   ═══════════════════════════════════════════════════════════════════ */
+async function buildCAPIPayload({
+  fbclid, fbp, userAgent, clientIp, pageUrl,
+  timestamp, userId, chatId, username, firstName,
+}) {
+  /* ── fbc: Facebook Click ID cookie ─────────────────────────────
+     Format: fb.{subdomain_index}.{timestamp_ms}.{fbclid}
+     This is the MAIN attribution signal — do not hash             */
+  const fbc = fbclid
+    ? `fb.1.${timestamp * 1000}.${fbclid}`
+    : undefined;
 
-  if (!PIXEL_ID || !ACCESS_TOKEN) return null;
+  /* ── Hash all PII (Facebook requirement) ───────────────────────*/
+  const [
+    hashedUserId,
+    hashedIp,
+    hashedUsername,
+    hashedFirstName,
+  ] = await Promise.all([
+    sha256(userId),
+    sha256(clientIp),
+    sha256(username),
+    sha256(firstName),
+  ]);
 
-  // fbc — Facebook Click ID cookie format
-  // fb.{subdomain_index}.{creation_time_ms}.{fbclid}
-  const fbc = fbclid ? `fb.1.${timestamp * 1000}.${fbclid}` : undefined;
+  /* ── Stable dedup event_id ──────────────────────────────────────
+     Same user + same chat → always same ID → FB deduplicates      */
+  const eventId   = `tg_joinreq_${chatId}_${userId}`;
+  const eventTime = Math.floor(Date.now() / 1000);
 
-  // Hash all PII before sending (Facebook requirement)
-  const hashedUserId    = await sha256(userId);
-  const hashedUsername  = username  ? await sha256(username)  : undefined;
-  const hashedFirstName = firstName ? await sha256(firstName) : undefined;
+  /* ── Full user_data object ──────────────────────────────────────*/
+  const user_data = {
+    // Identifiers (hashed)
+    external_id:  hashedUserId,
+    ...(hashedIp        && { client_ip_address: hashedIp }),
+    ...(hashedFirstName && { fn: hashedFirstName }),
+    ...(hashedUsername  && { ln: hashedUsername }),
 
-  // Stable dedup ID — prevents same event firing twice even if webhook retries
-  const eventId = `tg_joinreq_${chatId}_${userId}`;
+    // Facebook signals (NOT hashed)
+    ...(fbc        && { fbc }),
+    ...(fbp        && { fbp }),
+    ...(userAgent  && { client_user_agent: userAgent }),
+  };
 
-  const eventData = {
-    event_name:    "CompleteRegistration",   // Standard FB event — best for conversion campaigns
-    event_time:    Math.floor(Date.now() / 1000),
-    event_id:      eventId,                  // Deduplication key
-    action_source: "website",               // Required field
+  /* ── Full event object ──────────────────────────────────────────*/
+  const event = {
+    event_name:    "CompleteRegistration",
+    event_time:    eventTime,
+    event_id:      eventId,
+    action_source: "website",
 
-    user_data: {
-      external_id:   hashedUserId,           // Telegram user ID (hashed)
-      ...(fbc            && { fbc }),        // Ad click ID — attribution
-      ...(hashedUsername && { fn: hashedUsername }),    // first_name proxy
-      ...(hashedFirstName && { ln: hashedFirstName }),  // last_name proxy (optional)
-      client_user_agent: "TelegramBot/1.0", // Required for website action_source
-    },
+    user_data,
 
     custom_data: {
-      // Custom fields — visible in Events Manager
       content_name:     "Telegram Channel Join Request",
       content_category: "community",
       status:           "join_requested",
       telegram_chat_id: String(chatId),
       has_fbclid:       fbclid ? "yes" : "no",
+      has_fbp:          fbp    ? "yes" : "no",
     },
   };
 
+  return { eventId, eventTime, event, fbc };
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   Send to Facebook CAPI + log the full payload
+   ═══════════════════════════════════════════════════════════════════ */
+async function sendToFacebook(params) {
+  const PIXEL_ID     = process.env.FACEBOOK_PIXEL_ID;
+  const ACCESS_TOKEN = process.env.FACEBOOK_ACCESS_TOKEN;
+  const TEST_CODE    = process.env.FACEBOOK_TEST_EVENT_CODE;
+
+  if (!PIXEL_ID || !ACCESS_TOKEN) {
+    console.warn("[FB] ⚠️  CAPI env vars not set — event skipped");
+    return;
+  }
+
+  const { eventId, eventTime, event, fbc } = await buildCAPIPayload(params);
+
   const body = {
-    data: [eventData],
+    data: [event],
     ...(TEST_CODE && { test_event_code: TEST_CODE }),
   };
 
-  return { PIXEL_ID, ACCESS_TOKEN, body, eventId };
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Send to Facebook CAPI
-// ─────────────────────────────────────────────────────────────────────────────
-async function sendToFacebook(params) {
-  const built = await buildFBPayload(params);
-  if (!built) {
-    console.warn("[FB] CAPI env vars not set — skipping");
-    return { skipped: true };
-  }
-
-  const { PIXEL_ID, ACCESS_TOKEN, body, eventId } = built;
+  /* ── Log the full payload (visible in Vercel → Functions → Logs) */
+  console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+  console.log("[FB] 📤 CAPI PAYLOAD SENDING:");
+  console.log(JSON.stringify(body, null, 2));
+  console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
 
   const res  = await fetch(
     `https://graph.facebook.com/v19.0/${PIXEL_ID}/events?access_token=${ACCESS_TOKEN}`,
@@ -94,132 +123,156 @@ async function sendToFacebook(params) {
 
   const json = await res.json();
 
-  // Detailed log — visible in Vercel Functions logs
+  /* ── Log the result ─────────────────────────────────────────── */
   if (json.error) {
-    console.error(`[FB] ❌ CAPI ERROR — eventId:${eventId}`, JSON.stringify(json.error));
+    console.error("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+    console.error("[FB] ❌ CAPI ERROR:");
+    console.error(JSON.stringify(json, null, 2));
+    console.error("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
   } else {
-    console.log(
-      `[FB] ✅ CAPI SUCCESS — eventId:${eventId}` +
-      ` events_received:${json.events_received}` +
-      ` fbtrace_id:${json.fbtrace_id}` +
-      (json.messages?.length ? ` messages:${json.messages.join(",")}` : "")
-    );
+    console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+    console.log("[FB] ✅ CAPI SUCCESS:");
+    console.log(`  event_id        : ${eventId}`);
+    console.log(`  event_time      : ${eventTime} (${new Date(eventTime * 1000).toISOString()})`);
+    console.log(`  events_received : ${json.events_received}`);
+    console.log(`  fbtrace_id      : ${json.fbtrace_id}`);
+    console.log(`  fbc             : ${fbc || "(none — no fbclid)"}`);
+    console.log(`  has_fbp         : ${params.fbp ? "yes" : "no"}`);
+    console.log(`  has_ip          : ${params.clientIp ? "yes" : "no"}`);
+    console.log(`  has_ua          : ${params.userAgent ? "yes" : "no"}`);
+    if (json.messages?.length) {
+      console.log(`  messages        : ${json.messages.join(" | ")}`);
+    }
+    console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
   }
 
   return json;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Verify Telegram webhook secret header
-// ─────────────────────────────────────────────────────────────────────────────
+/* ═══════════════════════════════════════════════════════════════════
+   Verify Telegram webhook secret
+   ═══════════════════════════════════════════════════════════════════ */
 function isValidSecret(req) {
   const secret = process.env.TELEGRAM_WEBHOOK_SECRET;
-  if (!secret) return true; // not configured — skip check
+  if (!secret) return true;
   return req.headers.get("X-Telegram-Bot-Api-Secret-Token") === secret;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Main webhook entry point
-// ─────────────────────────────────────────────────────────────────────────────
+/* ═══════════════════════════════════════════════════════════════════
+   MAIN WEBHOOK HANDLER
+   ═══════════════════════════════════════════════════════════════════ */
 export async function POST(request) {
 
-  // 1. Security check
+  /* 1. Security ── */
   if (!isValidSecret(request)) {
-    console.warn("[Webhook] ⛔ Invalid secret token — request rejected");
+    console.warn("[Webhook] ⛔ Invalid secret — rejected");
     return Response.json({ ok: false }, { status: 403 });
   }
 
-  // 2. Parse body
+  /* 2. Parse ── */
   let update;
   try {
     update = await request.json();
   } catch {
-    console.error("[Webhook] Failed to parse JSON body");
     return Response.json({ ok: false }, { status: 400 });
   }
 
-  const updateType = Object.keys(update).find(k => k !== "update_id") ?? "unknown";
-  console.log(`[Webhook] Received update_id:${update.update_id} type:${updateType}`);
-
-  // 3. Only handle chat_join_request — ignore all other update types
+  /* 3. Filter — only chat_join_request ── */
   const joinReq = update.chat_join_request;
   if (!joinReq) {
-    return Response.json({ ok: true }); // Telegram needs 200 OK always
-  }
-
-  // 4. Extract key fields
-  const userId    = joinReq.from?.id;
-  const chatId    = joinReq.chat?.id;
-  const username  = joinReq.from?.username  || null;
-  const firstName = joinReq.from?.first_name || null;
-  const invName   = joinReq.invite_link?.name ?? "";
-
-  console.log(
-    `[Webhook] JoinRequest — user:${userId} (${firstName || "?"} @${username || "?"})` +
-    ` chat:${chatId} inviteName:"${invName}"`
-  );
-
-  if (!userId || !chatId) {
-    console.error("[Webhook] Missing userId or chatId — skipping");
     return Response.json({ ok: true });
   }
 
-  // 5. Deduplication — one event per user per chat, ever
+  /* 4. Extract Telegram fields ── */
+  const userId    = joinReq.from?.id;
+  const chatId    = joinReq.chat?.id;
+  const username  = joinReq.from?.username   || null;
+  const firstName = joinReq.from?.first_name || null;
+  const invName   = joinReq.invite_link?.name ?? "";
+
+  console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+  console.log("[Webhook] 📨 JOIN REQUEST RECEIVED:");
+  console.log(`  user_id    : ${userId}`);
+  console.log(`  username   : @${username || "(none)"}`);
+  console.log(`  first_name : ${firstName || "(none)"}`);
+  console.log(`  chat_id    : ${chatId}`);
+  console.log(`  invite_name: ${invName || "(none)"}`);
+  console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+
+  if (!userId || !chatId) {
+    console.error("[Webhook] ❌ Missing userId or chatId");
+    return Response.json({ ok: true });
+  }
+
+  /* 5. Deduplication ── */
   const dedupeKey = `processed:${chatId}:${userId}`;
   try {
     const already = await kv.get(dedupeKey);
     if (already) {
-      console.log(`[Webhook] ⏩ Duplicate — user:${userId} already processed — skipping FB event`);
+      console.log(`[Webhook] ⏩ DUPLICATE — user ${userId} already processed — FB event skipped`);
       return Response.json({ ok: true });
     }
-  } catch (kvErr) {
-    console.error("[Webhook] KV dedup read error:", kvErr);
-    // Proceed anyway — better to send duplicate than miss conversion
+  } catch (e) {
+    console.error("[Webhook] ⚠️  KV dedup read error:", e);
+    // Proceed — better to risk duplicate than miss conversion
   }
 
-  // 6. Extract uniqueId from invite link name: "start=<uniqueId>"
+  /* 6. Extract uniqueId from invite name: "start=<id>" ── */
   let uniqueId = null;
   if (invName.startsWith("start=")) {
     uniqueId = invName.slice(6).trim();
   }
 
-  // 7. Retrieve original fbclid & timestamp from KV
-  let fbclid    = "";
-  let timestamp = Math.floor(Date.now() / 1000);
+  /* 7. Retrieve session data (fbclid, IP, UA, fbp) from KV ── */
+  let session = {
+    fbclid: "", fbp: "", userAgent: "", clientIp: "", pageUrl: "",
+    timestamp: Math.floor(Date.now() / 1000),
+  };
 
   if (uniqueId) {
     try {
       const raw = await kv.get(`join:${uniqueId}`);
       if (raw) {
-        const parsed  = typeof raw === "string" ? JSON.parse(raw) : raw;
-        fbclid        = parsed.fbclid    || "";
-        timestamp     = parsed.timestamp || timestamp;
-        console.log(`[KV] ✅ Found — uniqueId:${uniqueId} fbclid:${fbclid || "(none)"}`);
+        const parsed = typeof raw === "string" ? JSON.parse(raw) : raw;
+        session = { ...session, ...parsed };
+        console.log("[KV] ✅ Session retrieved:");
+        console.log(`  uniqueId  : ${uniqueId}`);
+        console.log(`  fbclid    : ${session.fbclid || "(none)"}`);
+        console.log(`  fbp       : ${session.fbp    || "(none)"}`);
+        console.log(`  ip        : ${session.clientIp || "(none)"}`);
+        console.log(`  ua        : ${(session.userAgent || "").slice(0, 80) || "(none)"}`);
+        console.log(`  page_url  : ${session.pageUrl || "(none)"}`);
       } else {
-        console.warn(`[KV] ⚠️ No record for uniqueId:${uniqueId} — sending event without fbclid`);
+        console.warn(`[KV] ⚠️  No session for uniqueId:${uniqueId} — event will fire without fbclid`);
       }
-    } catch (kvErr) {
-      console.error("[KV] Read/parse error:", kvErr);
+    } catch (e) {
+      console.error("[KV] ❌ Read error:", e);
     }
   } else {
-    console.warn("[Webhook] Invite link has no uniqueId (manual link?) — no fbclid");
+    console.warn("[Webhook] ⚠️  No uniqueId in invite name — manual link or external join");
   }
 
-  // 8. Send Facebook CAPI event
+  /* 8. Send Facebook CAPI ── */
   try {
-    await sendToFacebook({ fbclid, timestamp, userId, chatId, username, firstName });
-  } catch (fbErr) {
-    console.error("[FB] Unhandled CAPI error:", fbErr);
-    // Don't fail — Telegram needs 200 OK
+    await sendToFacebook({
+      ...session,
+      userId,
+      chatId,
+      username,
+      firstName,
+    });
+  } catch (e) {
+    console.error("[FB] ❌ Unhandled CAPI error:", e);
+    // Must not throw — Telegram needs 200 OK
   }
 
-  // 9. Mark as processed — 30 day TTL
+  /* 9. Mark processed — 30 days ── */
   try {
     await kv.set(dedupeKey, "1", { ex: 60 * 60 * 24 * 30 });
-  } catch (kvErr) {
-    console.error("[Webhook] KV dedup write error:", kvErr);
+  } catch (e) {
+    console.error("[Webhook] ⚠️  KV dedup write error:", e);
   }
 
-  // 10. Always return 200 to Telegram
+  /* 10. Always 200 OK to Telegram ── */
   return Response.json({ ok: true });
 }
