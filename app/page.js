@@ -123,11 +123,10 @@ function LandingPage() {
         .err{padding:11px 13px;margin-bottom:12px;background:rgba(239,68,68,0.07);border:1px solid rgba(239,68,68,0.18);border-radius:9px;color:#f87171;font-size:12.5px;line-height:1.5;}
 
         .footer{text-align:center;padding:13px 22px 17px;border-top:1px solid #141720;}
-        .kdex-link{display:inline-flex;align-items:center;gap:5px;text-decoration:none;font-size:12px;color:rgba(255,255,255,0.6);transition:color .18s;}
-        .kdex-link:hover{color:rgba(255,255,255,0.85);}
-        .kdex-ads{font-weight:500;}
-        .kdex-sep{color:rgba(255,255,255,0.35);}
-        .kdex-brand{font-weight:800;color:#38bdf8;letter-spacing:.03em;transition:color .18s;}
+        .kdex-link{display:inline-flex;align-items:center;gap:3px;text-decoration:none;}
+        .kdex-ads{font-size:12px;color:rgba(255,255,255,0.45);font-weight:400;}
+        .kdex-sep{font-size:12px;color:rgba(255,255,255,0.45);}
+        .kdex-brand{font-size:12px;font-weight:800;color:#38bdf8;letter-spacing:.03em;transition:color .18s;}
         .kdex-link:hover .kdex-brand{color:#7dd3fc;}
 
         @media(max-width:400px){.banner{padding:20px 18px 18px}.body{padding:18px 16px 22px}.banner h1{font-size:19px}}
@@ -210,12 +209,12 @@ function LandingPage() {
           </div>
 
           <div className="footer">
-            <a href="https://kdex.io" target="_blank" rel="noreferrer" className="kdex-link">
-              <span className="kdex-ads">Ads by</span>
-              <span className="kdex-sep">·</span>
-              <span className="kdex-brand">KDex</span>
-            </a>
-          </div>
+  <a href="https://kdex.io" target="_blank" rel="noreferrer" className="kdex-link">
+    <span className="kdex-ads">Ads by</span>
+    <span className="kdex-sep"> · </span>
+    <span className="kdex-brand">KDex</span>
+  </a>
+</div>
 
         </div>
       </div>
