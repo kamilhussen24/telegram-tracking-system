@@ -287,8 +287,8 @@ function LandingPage() {
           display: inline-flex; align-items: center; gap: 0;
           text-decoration: none;
         }
-        .kdex-ads { font-size: 11.5px; color: rgba(255,255,255,0.28); font-weight: 400; }
-        .kdex-sep { font-size: 11.5px; color: rgba(255,255,255,0.28); margin: 0 3px; }
+        .kdex-ads { font-size: 11.5px; color: rgba(255,255,255,0.80); font-weight: 400; }
+        .kdex-sep { font-size: 11.5px; color: rgba(255,255,255,0.80); margin: 0 3px; }
         .kdex-brand {
           font-size: 11.5px; font-weight: 800; color: #38bdf8;
           letter-spacing: .04em; transition: color .18s;
