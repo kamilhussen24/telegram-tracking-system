@@ -3,35 +3,63 @@
 import { useSearchParams } from "next/navigation";
 import { useState, Suspense, useEffect, useRef } from "react";
 
-/* ─────────────────────────────────────────────────────────────
-   Helper: read _fbp cookie (Facebook browser ID)
-   ───────────────────────────────────────────────────────────── */
+/* ── Read _fbp cookie (set by Facebook Pixel) ─────────────────── */
 function getFbp() {
   try {
-    const match = document.cookie.match(/(^|;\s*)_fbp=([^;]*)/);
-    return match ? match[2] : "";
+    const m = document.cookie.match(/(^|;\s*)_fbp=([^;]*)/);
+    return m ? m[2] : "";
   } catch { return ""; }
 }
 
-/* ─────────────────────────────────────────────────────────────
-   Main landing page
-   ───────────────────────────────────────────────────────────── */
+/* ── Read _fbc cookie (set by Facebook Pixel from fbclid) ─────── */
+function getFbc() {
+  try {
+    const m = document.cookie.match(/(^|;\s*)_fbc=([^;]*)/);
+    return m ? m[2] : "";
+  } catch { return ""; }
+}
+
+/* ── Fire Pixel ViewContent event ─────────────────────────────── */
+function pixelViewContent() {
+  try {
+    if (typeof window !== "undefined" && window.fbq) {
+      window.fbq("track", "ViewContent", {
+        content_name: "Community Join Page",
+        content_category: "community",
+      });
+    }
+  } catch {}
+}
+
+/* ── Fire Pixel InitiateCheckout (Join button click) ──────────── */
+function pixelInitiateCheckout() {
+  try {
+    if (typeof window !== "undefined" && window.fbq) {
+      window.fbq("track", "InitiateCheckout", {
+        content_name: "Community Join Initiated",
+      });
+    }
+  } catch {}
+}
+
+/* ─────────────────────────────────────────────────────────────── */
 function LandingPage() {
   const searchParams = useSearchParams();
   const fbclid = searchParams.get("fbclid") || "";
 
-  const [status, setStatus]   = useState("idle"); // idle|loading|redirecting|done|error
-  const [errMsg, setErrMsg]   = useState("");
-  const [tgLink, setTgLink]   = useState("");
-  const redirected             = useRef(false);
+  const [status, setStatus] = useState("idle"); // idle|loading|redirecting|done|error
+  const [errMsg, setErrMsg] = useState("");
+  const [tgLink, setTgLink] = useState("");
+  const redirected = useRef(false);
 
-  /* After we have the link → redirect to Telegram */
+  /* Fire ViewContent once on load */
+  useEffect(() => { pixelViewContent(); }, []);
+
+  /* Redirect to community link after link is ready */
   useEffect(() => {
     if (!tgLink || redirected.current) return;
     redirected.current = true;
     window.location.href = tgLink;
-
-    /* Reset spinner after 4 s — user may still be on page (desktop) */
     const t = setTimeout(() => setStatus("done"), 4000);
     return () => clearTimeout(t);
   }, [tgLink]);
@@ -41,21 +69,19 @@ function LandingPage() {
     setStatus("loading");
     setErrMsg("");
 
+    /* Fire browser Pixel event */
+    pixelInitiateCheckout();
+
     try {
-      /* Collect browser signals for Facebook EMQ */
       const userAgent = navigator.userAgent || "";
-      const fbp       = getFbp();
+      const fbp       = getFbp();   // from Facebook Pixel cookie
+      const fbc       = getFbc();   // from Facebook Pixel cookie (fbclid based)
       const pageUrl   = window.location.href;
 
-      const res  = await fetch("/api/create-link", {
+      const res = await fetch("/api/create-link", {
         method:  "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          fbclid,
-          fbp,
-          userAgent,
-          pageUrl,
-        }),
+        body: JSON.stringify({ fbclid, fbp, fbc, userAgent, pageUrl }),
       });
 
       const data = await res.json();
@@ -75,176 +101,86 @@ function LandingPage() {
     <>
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap');
-
         *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
-        body{
-          font-family:'Inter',system-ui,sans-serif;
-          background:#0b0c10;color:#e2e4ee;
-          min-height:100vh;
-          -webkit-font-smoothing:antialiased;
-        }
+        body{font-family:'Inter',system-ui,sans-serif;background:#0b0c10;color:#e2e4ee;min-height:100vh;-webkit-font-smoothing:antialiased;}
 
-        /* ── Page ── */
         .page{
-          min-height:100vh;
-          display:flex;flex-direction:column;
+          min-height:100vh;display:flex;flex-direction:column;
           align-items:center;justify-content:flex-start;
           padding:24px 16px 48px;
-          background:
-            radial-gradient(ellipse 90% 50% at 50% -5%,
-              rgba(34,158,217,0.18) 0%, transparent 65%),
-            #0b0c10;
+          background:radial-gradient(ellipse 90% 50% at 50% -5%,rgba(34,158,217,0.18) 0%,transparent 65%),#0b0c10;
         }
 
-        /* ── Card ── */
         .card{
           width:100%;max-width:430px;
           background:#111318;
           border:1px solid rgba(255,255,255,0.07);
           border-radius:20px;overflow:hidden;
-          box-shadow:0 32px 80px rgba(0,0,0,0.7),
-                     0 0 0 1px rgba(34,158,217,0.06);
+          box-shadow:0 32px 80px rgba(0,0,0,0.7),0 0 0 1px rgba(34,158,217,0.06);
         }
 
-        /* ── Banner ── */
+        /* Banner */
         .banner{
           background:linear-gradient(135deg,#1565a8,#229ed9 55%,#1fb8d3);
-          padding:26px 26px 22px;text-align:center;
-          position:relative;overflow:hidden;
+          padding:26px 26px 22px;text-align:center;position:relative;overflow:hidden;
         }
-        .banner::after{
-          content:'';position:absolute;inset:0;
-          background:radial-gradient(ellipse 70% 80% at 50% 120%,rgba(0,0,0,0.25),transparent);
-          pointer-events:none;
-        }
-        .tg-wrap{
+        .banner::after{content:'';position:absolute;inset:0;background:radial-gradient(ellipse 70% 80% at 50% 120%,rgba(0,0,0,0.25),transparent);pointer-events:none;}
+        .icon-wrap{
           width:62px;height:62px;border-radius:17px;
-          background:rgba(255,255,255,0.18);
-          backdrop-filter:blur(8px);
+          background:rgba(255,255,255,0.18);backdrop-filter:blur(8px);
           border:1.5px solid rgba(255,255,255,0.3);
           display:flex;align-items:center;justify-content:center;
           margin:0 auto 13px;position:relative;z-index:1;
         }
-        .banner h1{
-          font-size:21px;font-weight:800;color:#fff;
-          line-height:1.25;letter-spacing:-.02em;
-          position:relative;z-index:1;
-        }
-        .banner-sub{
-          font-size:13px;color:rgba(255,255,255,0.72);
-          margin-top:5px;position:relative;z-index:1;
-        }
+        .banner h1{font-size:21px;font-weight:800;color:#fff;line-height:1.25;letter-spacing:-.02em;position:relative;z-index:1;}
+        .banner-sub{font-size:13px;color:rgba(255,255,255,0.72);margin-top:5px;position:relative;z-index:1;}
 
-        /* ── Body ── */
+        /* Body */
         .body{padding:22px 22px 26px;}
 
-        /* ── Live badge ── */
+        /* Live badge */
         @keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
-        .live{
-          display:inline-flex;align-items:center;gap:6px;
-          background:rgba(35,209,139,0.09);
-          border:1px solid rgba(35,209,139,0.22);
-          color:#23d18b;font-size:11px;font-weight:700;
-          padding:4px 11px;border-radius:999px;
-          letter-spacing:.07em;text-transform:uppercase;
-          margin-bottom:14px;
-        }
+        .live{display:inline-flex;align-items:center;gap:6px;background:rgba(35,209,139,0.09);border:1px solid rgba(35,209,139,0.22);color:#23d18b;font-size:11px;font-weight:700;padding:4px 11px;border-radius:999px;letter-spacing:.07em;text-transform:uppercase;margin-bottom:14px;}
         .live-dot{width:6px;height:6px;border-radius:50%;background:#23d18b;animation:pulse 1.8s infinite;}
 
-        /* ── Stats ── */
+        /* Stats */
         .stats{display:flex;gap:7px;margin-bottom:18px;}
-        .stat{
-          flex:1;text-align:center;
-          background:#0d1017;border:1px solid #191d27;
-          border-radius:10px;padding:11px 6px;
-        }
+        .stat{flex:1;text-align:center;background:#0d1017;border:1px solid #191d27;border-radius:10px;padding:11px 6px;}
         .stat-num{font-size:18px;font-weight:800;color:#e2e4ee;line-height:1;}
         .stat-lbl{font-size:10.5px;color:#424660;margin-top:3px;font-weight:500;}
 
-        /* ── CTA Button ── */
+        /* Button */
         @keyframes spin{to{transform:rotate(360deg)}}
-        .btn{
-          display:flex;align-items:center;justify-content:center;gap:9px;
-          width:100%;padding:16px;border-radius:13px;border:none;
-          font-size:15.5px;font-weight:700;cursor:pointer;
-          transition:transform .18s,box-shadow .18s;
-          letter-spacing:.01em;margin-bottom:14px;
-          font-family:'Inter',system-ui,sans-serif;
-        }
-        .btn-primary{
-          background:linear-gradient(135deg,#1e90d4,#229ed9,#1fb8cf);
-          color:#fff;box-shadow:0 8px 28px rgba(34,158,217,0.42);
-        }
-        .btn-primary:hover:not(:disabled){
-          transform:translateY(-2px);
-          box-shadow:0 14px 36px rgba(34,158,217,0.58);
-        }
+        .btn{display:flex;align-items:center;justify-content:center;gap:9px;width:100%;padding:16px;border-radius:13px;border:none;font-size:15.5px;font-weight:700;cursor:pointer;transition:transform .18s,box-shadow .18s;letter-spacing:.01em;margin-bottom:14px;font-family:'Inter',system-ui,sans-serif;}
+        .btn-primary{background:linear-gradient(135deg,#1e90d4,#229ed9,#1fb8cf);color:#fff;box-shadow:0 8px 28px rgba(34,158,217,0.42);}
+        .btn-primary:hover:not(:disabled){transform:translateY(-2px);box-shadow:0 14px 36px rgba(34,158,217,0.58);}
         .btn-primary:active:not(:disabled){transform:translateY(0)}
         .btn:disabled{background:#181b24;color:#3e4255;box-shadow:none;cursor:not-allowed;}
-        .btn-done{
-          background:linear-gradient(135deg,#047857,#10b981);
-          color:#fff;box-shadow:0 8px 28px rgba(16,185,129,0.35);cursor:default;
-        }
-        .spinner{
-          width:17px;height:17px;flex-shrink:0;
-          border:2.5px solid rgba(255,255,255,0.18);
-          border-top-color:#fff;border-radius:50%;
-          animation:spin .7s linear infinite;
-        }
+        .btn-done{background:linear-gradient(135deg,#047857,#10b981);color:#fff;box-shadow:0 8px 28px rgba(16,185,129,0.35);cursor:default;}
+        .spinner{width:17px;height:17px;flex-shrink:0;border:2.5px solid rgba(255,255,255,0.18);border-top-color:#fff;border-radius:50%;animation:spin .7s linear infinite;}
 
-        /* ── Redirect notice ── */
-        .redirect-notice{
-          display:flex;align-items:flex-start;gap:9px;
-          padding:11px 13px;margin-bottom:14px;
-          background:rgba(34,158,217,0.07);
-          border:1px solid rgba(34,158,217,0.18);
-          border-radius:10px;font-size:12.5px;color:#5ab5e0;line-height:1.55;
-        }
+        /* Redirect notice */
+        .redirect-notice{display:flex;align-items:flex-start;gap:9px;padding:11px 13px;margin-bottom:14px;background:rgba(34,158,217,0.07);border:1px solid rgba(34,158,217,0.18);border-radius:10px;font-size:12.5px;color:#5ab5e0;line-height:1.55;}
 
-        /* ── Divider ── */
-        .divider{
-          display:flex;align-items:center;gap:9px;margin-bottom:14px;
-          font-size:10.5px;color:#2a2d3d;font-weight:600;
-          text-transform:uppercase;letter-spacing:.07em;
-        }
+        /* Divider */
+        .divider{display:flex;align-items:center;gap:9px;margin-bottom:14px;font-size:10.5px;color:#2a2d3d;font-weight:600;text-transform:uppercase;letter-spacing:.07em;}
         .divider::before,.divider::after{content:'';flex:1;height:1px;background:#181b24;}
 
-        /* ── Features ── */
-        .features{display:flex;flex-direction:column;gap:8px;margin-bottom:20px;}
-        .feat{
-          display:flex;align-items:center;gap:11px;
-          padding:10px 13px;background:#0d1017;
-          border:1px solid #191d27;border-radius:9px;
-          font-size:13px;color:#8890aa;
-        }
+        /* Features */
+        .features{display:flex;flex-direction:column;gap:8px;}
+        .feat{display:flex;align-items:center;gap:11px;padding:10px 13px;background:#0d1017;border:1px solid #191d27;border-radius:9px;font-size:13px;color:#8890aa;}
         .feat-ico{font-size:16px;flex-shrink:0;}
         .feat strong{color:#c4c8dc;font-weight:600;}
 
-        /* ── Error ── */
-        .err{
-          padding:11px 13px;margin-bottom:12px;
-          background:rgba(239,68,68,0.07);
-          border:1px solid rgba(239,68,68,0.18);
-          border-radius:9px;color:#f87171;font-size:12.5px;line-height:1.5;
-        }
+        /* Error */
+        .err{padding:11px 13px;margin-bottom:12px;background:rgba(239,68,68,0.07);border:1px solid rgba(239,68,68,0.18);border-radius:9px;color:#f87171;font-size:12.5px;line-height:1.5;}
 
-        /* ── Footer ── */
-        .footer{
-          text-align:center;padding:14px 22px 18px;
-          border-top:1px solid #141720;
-        }
-        .footer-note{font-size:11px;color:#282c3a;line-height:1.65;margin-bottom:10px;}
-        .kdex-credit{
-          display:inline-flex;align-items:center;gap:5px;
-          font-size:11px;color:#2e3347;
-          text-decoration:none;
-          transition:color .18s;
-        }
-        .kdex-credit:hover{color:#229ed9;}
-        .kdex-dot{
-          width:4px;height:4px;border-radius:50%;
-          background:#2e3347;margin:0 2px;
-        }
+        /* Footer */
+        .footer{text-align:center;padding:14px 22px 18px;border-top:1px solid #141720;}
+        .kdex-credit{display:inline-flex;align-items:center;gap:5px;font-size:12px;color:#ffffff;text-decoration:none;transition:opacity .18s;opacity:0.85;}
+        .kdex-credit:hover{opacity:1;}
+        .kdex-brand{font-weight:800;color:#ffffff;letter-spacing:.04em;}
+        .kdex-sep{color:rgba(255,255,255,0.3);margin:0 2px;}
 
         @media(max-width:400px){
           .banner{padding:20px 18px 18px}
@@ -256,26 +192,28 @@ function LandingPage() {
       <div className="page">
         <div className="card">
 
-          {/* ── Banner ── */}
+          {/* Banner — no "Telegram" branding */}
           <div className="banner">
-            <div className="tg-wrap">
-              <svg width="32" height="32" viewBox="0 0 24 24" fill="white">
-                <path d="M12 0C5.373 0 0 5.373 0 12s5.373 12 12 12 12-5.373 12-12S18.627 0 12 0zm5.894 8.221-1.97 9.28c-.145.658-.537.818-1.084.508l-3-2.21-1.447 1.394c-.16.16-.295.295-.605.295l.213-3.053 5.56-5.023c.242-.213-.054-.333-.373-.12L7.19 13.67l-2.965-.924c-.644-.204-.657-.644.136-.953l11.57-4.461c.537-.194 1.006.131.963.889z"/>
+            <div className="icon-wrap">
+              {/* Generic community/group icon */}
+              <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
+                <circle cx="9" cy="7" r="4"/>
+                <path d="M23 21v-2a4 4 0 0 0-3-3.87"/>
+                <path d="M16 3.13a4 4 0 0 1 0 7.75"/>
               </svg>
             </div>
-            <h1>Join Our Private<br/>Telegram Channel</h1>
-            <p className="banner-sub">Exclusive content · Expert support · Zero spam</p>
+            <h1>Join Our Private<br/>Exclusive Community</h1>
+            <p className="banner-sub">Expert insights · Daily updates · Zero spam</p>
           </div>
 
-          {/* ── Body ── */}
+          {/* Body */}
           <div className="body">
 
-            {/* Live badge */}
             <div style={{textAlign:"center"}}>
               <span className="live"><span className="live-dot"/>Members Active Now</span>
             </div>
 
-            {/* Stats */}
             <div className="stats">
               {[["10K+","Members"],["Daily","Updates"],["Free","Access"]].map(([n,l])=>(
                 <div className="stat" key={l}>
@@ -285,26 +223,20 @@ function LandingPage() {
               ))}
             </div>
 
-            {/* ── CTA — TOP ── */}
+            {/* CTA — top */}
             {status === "done" ? (
               <button className="btn btn-done" disabled>
-                ✅ Opened in Telegram — Request to Join
+                ✅ Link Opened — Request to Join
               </button>
             ) : (
-              <button
-                className="btn btn-primary"
-                onClick={handleJoin}
-                disabled={isLoading}
-              >
+              <button className="btn btn-primary" onClick={handleJoin} disabled={isLoading}>
                 {isLoading ? (
-                  <>
-                    <div className="spinner"/>
-                    {status === "redirecting" ? "Opening Telegram…" : "Creating your link…"}
-                  </>
+                  <><div className="spinner"/>{status === "redirecting" ? "Opening…" : "Creating your link…"}</>
                 ) : (
                   <>
-                    <svg width="19" height="19" viewBox="0 0 24 24" fill="white">
-                      <path d="M12 0C5.373 0 0 5.373 0 12s5.373 12 12 12 12-5.373 12-12S18.627 0 12 0zm5.894 8.221-1.97 9.28c-.145.658-.537.818-1.084.508l-3-2.21-1.447 1.394c-.16.16-.295.295-.605.295l.213-3.053 5.56-5.023c.242-.213-.054-.333-.373-.12L7.19 13.67l-2.965-.924c-.644-.204-.657-.644.136-.953l11.57-4.461c.537-.194 1.006.131.963.889z"/>
+                    <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/>
+                      <line x1="19" y1="8" x2="19" y2="14"/><line x1="22" y1="11" x2="16" y2="11"/>
                     </svg>
                     Join Community Free →
                   </>
@@ -312,36 +244,26 @@ function LandingPage() {
               </button>
             )}
 
-            {/* Redirect notice with manual link */}
+            {/* Redirect notice */}
             {status === "redirecting" && tgLink && (
               <div className="redirect-notice">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#5ab5e0" strokeWidth="2" strokeLinecap="round" style={{flexShrink:0,marginTop:1}}>
                   <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
                 </svg>
-                <span>
-                  Telegram এ যাচ্ছেন… না খুললে{" "}
-                  <a href={tgLink} style={{color:"#229ed9",fontWeight:600}} target="_blank" rel="noreferrer">
-                    এখানে ক্লিক করুন
-                  </a>
-                </span>
+                <span>Opening your link… না খুললে <a href={tgLink} style={{color:"#229ed9",fontWeight:600}} target="_blank" rel="noreferrer">এখানে ক্লিক করুন</a></span>
               </div>
             )}
 
-            {/* Error */}
-            {status === "error" && (
-              <div className="err">⚠️ {errMsg} — Please try again.</div>
-            )}
+            {status === "error" && <div className="err">⚠️ {errMsg} — Please try again.</div>}
 
-            {/* Divider */}
             <div className="divider">What you get</div>
 
-            {/* Features */}
             <div className="features">
               {[
-                ["🔒","Private Access","Verified members only — no public link"],
+                ["🔒","Private Access","Verified members only"],
                 ["⚡","Daily Insights","Fresh exclusive content every day"],
-                ["💬","Expert Support","Direct answers from our specialists"],
-                ["🎯","Zero Spam","Only high-value, curated posts"],
+                ["💬","Expert Support","Direct answers from specialists"],
+                ["🎯","Zero Spam","Only high-value curated posts"],
               ].map(([ico,title,desc])=>(
                 <div className="feat" key={title}>
                   <span className="feat-ico">{ico}</span>
@@ -350,23 +272,14 @@ function LandingPage() {
               ))}
             </div>
 
-          </div>{/* /body */}
+          </div>
 
-          {/* ── Footer ── */}
+          {/* Footer — white KDex, no bottom note */}
           <div className="footer">
-            <p className="footer-note">
-              আপনার invite link টি unique এবং শুধুমাত্র আপনার জন্য।<br/>
-              Telegram এ "Request to Join" করলেই আপনার জায়গা নিশ্চিত হবে।
-            </p>
-            <a
-              href="https://kdex.io"
-              target="_blank"
-              rel="noreferrer"
-              className="kdex-credit"
-            >
+            <a href="https://kdex.io" target="_blank" rel="noreferrer" className="kdex-credit">
               <span>Ads by</span>
-              <span className="kdex-dot"/>
-              <strong style={{color:"#3a4060",fontWeight:700,letterSpacing:".03em"}}>KDex</strong>
+              <span className="kdex-sep">·</span>
+              <span className="kdex-brand">KDex</span>
             </a>
           </div>
 

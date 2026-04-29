@@ -11,39 +11,34 @@ export async function POST(request) {
     return Response.json({ error: "Server config missing" }, { status: 500 });
   }
 
-  // ── Parse body ───────────────────────────────────────────────
-  let fbclid = "", fbp = "", userAgent = "", pageUrl = "";
+  let fbclid = "", fbp = "", fbc = "", userAgent = "", pageUrl = "";
   try {
     const body = await request.json();
     fbclid    = (body.fbclid    || "").trim().slice(0, 500);
     fbp       = (body.fbp       || "").trim().slice(0, 200);
+    fbc       = (body.fbc       || "").trim().slice(0, 300);
     userAgent = (body.userAgent || "").trim().slice(0, 500);
     pageUrl   = (body.pageUrl   || "").trim().slice(0, 500);
-  } catch { /* no body */ }
+  } catch {}
 
-  // ── Real client IP (Vercel forwards this) ────────────────────
+  // Real client IP from Vercel headers
   const clientIp =
     request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
-    request.headers.get("x-real-ip") ||
-    "";
+    request.headers.get("x-real-ip") || "";
 
-  // ── Unique session ID ─────────────────────────────────────────
   const uniqueId  = crypto.randomUUID().replace(/-/g, "").slice(0, 20);
   const timestamp = Math.floor(Date.now() / 1000);
 
-  // ── Store all signals in KV (30 days TTL) ────────────────────
-  const payload = {
-    fbclid,
-    fbp,
-    userAgent,
-    clientIp,
-    pageUrl,
-    timestamp,
-    createdAt: new Date().toISOString(),
+  // Build fbc from fbclid if pixel cookie not available
+  const finalFbc = fbc || (fbclid ? `fb.1.${timestamp * 1000}.${fbclid}` : "");
+
+  const session = {
+    fbclid, fbp, fbc: finalFbc, userAgent, clientIp, pageUrl,
+    timestamp, createdAt: new Date().toISOString(),
   };
 
   try {
-    await kv.set(`join:${uniqueId}`, JSON.stringify(payload), {
+    await kv.set(`join:${uniqueId}`, JSON.stringify(session), {
       ex: 60 * 60 * 24 * 30,
     });
   } catch (e) {
@@ -56,17 +51,18 @@ export async function POST(request) {
     ` | uniqueId:${uniqueId}` +
     ` | fbclid:${fbclid || "(none)"}` +
     ` | fbp:${fbp || "(none)"}` +
+    ` | fbc:${finalFbc || "(none)"}` +
     ` | ip:${clientIp || "(none)"}` +
-    ` | ua:${userAgent.slice(0, 60) || "(none)"}`
+    ` | ua:${userAgent.slice(0, 50) || "(none)"}`
   );
 
-  // ── Create Telegram invite link ───────────────────────────────
+  // Create Telegram invite link
   let tgData;
   try {
     const tgRes = await fetch(
       `https://api.telegram.org/bot${BOT_TOKEN}/createChatInviteLink`,
       {
-        method:  "POST",
+        method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           chat_id:              CHAT_ID,
