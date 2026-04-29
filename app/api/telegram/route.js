@@ -6,7 +6,7 @@ export const runtime = "nodejs";
 // SHA-256 — Meta CAPI hashing rules:
 //   HASH   : external_id, fn, ln, em, ph, ct, st, zp, country, db, ge
 //   NO HASH: client_ip_address, client_user_agent, fbc, fbp
-// Ref: https://developers.facebook.com/docs/marketing-api/conversions-api/parameters/customer-information-parameters
+// https://developers.facebook.com/docs/marketing-api/conversions-api/parameters/customer-information-parameters
 // ─────────────────────────────────────────────────────────────────────────────
 async function sha256(value) {
   if (!value) return undefined;
@@ -20,18 +20,29 @@ async function sha256(value) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Build Meta CAPI payload
+// Build Meta CAPI payload — correct field mapping:
+//   fn = first_name  (hashed)
+//   ln = last_name   (hashed)
+//   external_id      (hashed) — Telegram user ID
+//   client_ip_address (plain)
+//   client_user_agent (plain)
+//   fbc               (plain)
+//   fbp               (plain)
 // ─────────────────────────────────────────────────────────────────────────────
-async function buildPayload({ fbclid, fbp, fbc, userAgent, clientIp, timestamp, userId, chatId, username, firstName }) {
-
-  // fbc: priority → pixel cookie (_fbc) → construct from fbclid
+async function buildPayload({
+  fbclid, fbp, fbc,
+  userAgent, clientIp,
+  timestamp, userId, chatId,
+  firstName, lastName,
+}) {
+  // fbc priority: pixel cookie (_fbc) → construct from fbclid
   const finalFbc = fbc || (fbclid ? `fb.1.${timestamp * 1000}.${fbclid}` : undefined);
 
-  // Hash only PII (Meta requirement)
-  const [h_userId, h_firstName, h_username] = await Promise.all([
+  // Hash only PII — in parallel for performance
+  const [h_userId, h_firstName, h_lastName] = await Promise.all([
     sha256(userId),
-    sha256(firstName),
-    sha256(username),
+    sha256(firstName),   // fn = first_name
+    sha256(lastName),    // ln = last_name
   ]);
 
   const eventId   = `tg_joinreq_${chatId}_${userId}`;
@@ -40,10 +51,10 @@ async function buildPayload({ fbclid, fbp, fbc, userAgent, clientIp, timestamp, 
   const user_data = {
     // ✅ Hashed PII
     external_id: h_userId,
-    ...(h_firstName && { fn: h_firstName }),
-    ...(h_username  && { ln: h_username }),
+    ...(h_firstName && { fn: h_firstName }),  // first_name
+    ...(h_lastName  && { ln: h_lastName }),   // last_name
 
-    // ✅ Raw — Meta normalizes/processes these internally (do NOT hash)
+    // ✅ Raw — Meta processes internally (do NOT hash)
     ...(clientIp  && { client_ip_address: clientIp }),
     ...(userAgent && { client_user_agent: userAgent }),
     ...(finalFbc  && { fbc: finalFbc }),
@@ -53,7 +64,7 @@ async function buildPayload({ fbclid, fbp, fbc, userAgent, clientIp, timestamp, 
   const event = {
     event_name:    "CompleteRegistration",
     event_time:    eventTime,
-    event_id:      eventId,        // Deduplication — Meta ignores duplicates with same event_id
+    event_id:      eventId,
     action_source: "website",
     user_data,
     custom_data: {
@@ -80,7 +91,7 @@ async function sendToFacebook(params) {
   const TEST_CODE    = process.env.FACEBOOK_TEST_EVENT_CODE;
 
   if (!PIXEL_ID || !ACCESS_TOKEN) {
-    console.log("[CAPI] Skipped — FACEBOOK_PIXEL_ID or FACEBOOK_ACCESS_TOKEN not configured");
+    console.log("[CAPI] Skipped — env vars not configured");
     return;
   }
 
@@ -91,7 +102,6 @@ async function sendToFacebook(params) {
     ...(TEST_CODE && { test_event_code: TEST_CODE }),
   };
 
-  // Log full payload for debugging
   console.log("[CAPI] Payload:");
   console.log(JSON.stringify(body, null, 2));
 
@@ -109,9 +119,6 @@ async function sendToFacebook(params) {
 
   if (json.error) {
     console.error(`[CAPI] Error ${json.error.code} (${json.error.type}): ${json.error.message}`);
-    if (json.error.error_subcode) {
-      console.error(`[CAPI] Subcode: ${json.error.error_subcode}`);
-    }
   } else {
     console.log(
       `[CAPI] Success | events_received:${json.events_received}` +
@@ -124,7 +131,8 @@ async function sendToFacebook(params) {
       ` | fbc:${finalFbc ? "yes" : "no"}` +
       ` | ip:${params.clientIp ? "yes" : "no"}` +
       ` | ua:${params.userAgent ? "yes" : "no"}` +
-      ` | name:${params.firstName ? "yes" : "no"}`
+      ` | fn:${params.firstName ? "yes" : "no"}` +
+      ` | ln:${params.lastName ? "yes" : "no"}`
     );
     if (json.messages?.length) {
       console.log(`[CAPI] Messages: ${json.messages.join(" | ")}`);
@@ -135,16 +143,16 @@ async function sendToFacebook(params) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Verify Telegram webhook secret header
+// Verify Telegram webhook secret
 // ─────────────────────────────────────────────────────────────────────────────
 function isValidSecret(req) {
   const secret = process.env.TELEGRAM_WEBHOOK_SECRET;
-  if (!secret) return true; // skip check if not configured
+  if (!secret) return true;
   return req.headers.get("X-Telegram-Bot-Api-Secret-Token") === secret;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Main webhook handler
+// MAIN WEBHOOK HANDLER
 // ─────────────────────────────────────────────────────────────────────────────
 export async function POST(request) {
 
@@ -163,26 +171,38 @@ export async function POST(request) {
     return Response.json({ ok: false }, { status: 400 });
   }
 
-  // 3. Only handle chat_join_request — ignore all other update types
+  // 3. Only handle chat_join_request
   const joinReq = update.chat_join_request;
   if (!joinReq) return Response.json({ ok: true });
 
-  // 4. Extract fields from Telegram update
+  // 4. Extract Telegram fields
   const userId    = joinReq.from?.id;
   const chatId    = joinReq.chat?.id;
-  const username  = joinReq.from?.username   || null;
-  const firstName = joinReq.from?.first_name || null;
-  const lastName  = joinReq.from?.last_name  || null;
+  const firstName = joinReq.from?.first_name || null;  // fn
+  const lastName  = joinReq.from?.last_name  || null;  // ln (actual last name)
+  const username  = joinReq.from?.username   || null;  // @username (for logging only)
   const invName   = joinReq.invite_link?.name ?? "";
 
-  console.log(`[Webhook] Join request | user:${userId} (@${username || "?"}) | chat:${chatId}`);
+  console.log(`[Webhook] Join request | user:${userId} (@${username || "?"}) | chat:${chatId} | invite:"${invName}"`);
 
   if (!userId || !chatId) {
-    console.error("[Webhook] Missing userId or chatId in update");
+    console.error("[Webhook] Missing userId or chatId");
     return Response.json({ ok: true });
   }
 
-  // 5. Deduplication — one CAPI event per user per chat (30 days)
+  // ─────────────────────────────────────────────────────────────────────────
+  // ✅ FIX: Only fire FB event if invite link was created by OUR bot
+  //    Our bot names links as: "start=<uniqueId>"
+  //    Other links (manual, external) have different names → SKIP
+  // ─────────────────────────────────────────────────────────────────────────
+  const isOurLink = invName.startsWith("start=");
+
+  if (!isOurLink) {
+    console.log(`[Webhook] Skipped — not our bot link (invite:"${invName}") — no FB event sent`);
+    return Response.json({ ok: true });
+  }
+
+  // 5. Deduplication — one event per user per chat (30 days)
   const dedupeKey = `processed:${chatId}:${userId}`;
   try {
     const already = await kv.get(dedupeKey);
@@ -191,17 +211,14 @@ export async function POST(request) {
       return Response.json({ ok: true });
     }
   } catch (kvErr) {
-    // KV read failed — proceed anyway (better to risk duplicate than miss conversion)
     console.error("[Webhook] KV dedup read error:", kvErr?.message || kvErr);
+    // proceed — better to risk duplicate than miss conversion
   }
 
-  // 6. Extract uniqueId from invite link name: "start=<uniqueId>"
-  let uniqueId = null;
-  if (invName.startsWith("start=")) {
-    uniqueId = invName.slice(6).trim() || null;
-  }
+  // 6. Extract uniqueId: "start=<uniqueId>"
+  const uniqueId = invName.slice(6).trim() || null;
 
-  // 7. Retrieve browser session signals from KV
+  // 7. Retrieve session from KV
   let session = {
     fbclid: "", fbp: "", fbc: "",
     userAgent: "", clientIp: "",
@@ -221,13 +238,11 @@ export async function POST(request) {
           ` | ip:${session.clientIp || "none"}`
         );
       } else {
-        console.warn(`[KV] No session for uniqueId:${uniqueId} — event will fire without fbclid`);
+        console.warn(`[KV] No session for uniqueId:${uniqueId} — sending event without fbclid`);
       }
     } catch (kvErr) {
-      console.error("[KV] Read/parse error:", kvErr?.message || kvErr);
+      console.error("[KV] Read error:", kvErr?.message || kvErr);
     }
-  } else {
-    console.warn(`[Webhook] No uniqueId in invite name "${invName}" — manual link or external join`);
   }
 
   // 8. Send to Facebook CAPI
@@ -236,21 +251,20 @@ export async function POST(request) {
       ...session,
       userId,
       chatId,
-      username,
-      firstName: firstName || lastName, // use lastName as fallback if no firstName
+      firstName,  // actual first_name → fn (hashed)
+      lastName,   // actual last_name  → ln (hashed)
     });
   } catch (fbErr) {
-    // Never let CAPI errors break the webhook response to Telegram
     console.error("[CAPI] Unhandled error:", fbErr?.message || fbErr);
   }
 
-  // 9. Mark as processed (30 days TTL)
+  // 9. Mark processed (30 days)
   try {
     await kv.set(dedupeKey, "1", { ex: 60 * 60 * 24 * 30 });
   } catch (kvErr) {
-    console.error("[KV] Dedup write error:", kvErr?.message || kvErr);
+    console.error("[KV] Write error:", kvErr?.message || kvErr);
   }
 
-  // 10. Always return 200 OK to Telegram (critical — Telegram retries on non-200)
+  // 10. Always 200 OK to Telegram
   return Response.json({ ok: true });
 }
